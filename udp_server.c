@@ -1,7 +1,7 @@
 /* 
- * udpserver.c - A simple UDP echo server 
- * usage: udpserver <port>
- */
+* udpserver.c - A simple UDP echo server 
+* usage: udpserver <port>
+*/
 
 #include <stdio.h>
 #include <unistd.h>
@@ -26,7 +26,7 @@ void error(char *msg) {
 int main(int argc, char **argv) {
     int sockfd; /* socket */
     int portno; /* port to listen on */
-    int clientlen; /* byte size of client's address */
+    socklen_t clientlen; /* byte size of client's address */
     struct sockaddr_in serveraddr; /* server's addr */
     struct sockaddr_in clientaddr; /* client addr */
     struct hostent *hostp; /* client host info */
@@ -74,8 +74,7 @@ int main(int argc, char **argv) {
     /* 
     * bind: associate the parent socket with a port 
     */
-    if (bind(sockfd, (struct sockaddr *) &serveraddr, 
-        sizeof(serveraddr)) < 0) 
+    if (bind(sockfd, (struct sockaddr *) &serveraddr, sizeof(serveraddr)) < 0) 
         error("ERROR on binding");
     
     /* 
@@ -83,29 +82,22 @@ int main(int argc, char **argv) {
     */
     clientlen = sizeof(clientaddr);
     while (1) {
-    
         /*
-      * recvfrom: receive a UDP datagram from a client
-      */
-        bzer(buf, BUFSIZE);
-        n = orecvfrom(sockfd, buf, BUFSIZE, 0,
-          (struct sockaddr *) &clientaddr, &clientlen);
-        if (n < 0)
-        error("ERROR in recvfrom");
+        * recvfrom: receive a UDP datagram from a client
+        */
+        bzero(buf, BUFSIZE);
+        n = recvfrom(sockfd, buf, BUFSIZE, 0, (struct sockaddr *) &clientaddr, &clientlen);
+        if (n < 0) error("ERROR in recvfrom");
     
         /* 
-      * gethostbyaddr: determine who sent the datagram
-      */
-     hostp = gethostbyaddr((const char *)&clientaddr.sin_addr.s_addr, 
-                sizeof(clientaddr.sin_addr.s_addr), AF_INET);
-        if (hostp == NULL)
-        error("ERROR on gethostbyaddr");
+        * gethostbyaddr: determine who sent the datagram
+        */
+        hostp = gethostbyaddr((const char *)&clientaddr.sin_addr.s_addr, sizeof(clientaddr.sin_addr.s_addr), AF_INET);
+        if (hostp == NULL) error("ERROR on gethostbyaddr");
         hostaddrp = inet_ntoa(clientaddr.sin_addr);
-        if (hostaddrp == NULL)
-        error("ERROR on inet_ntoa\n");
-        printf("server received datagram from %s (%s)\n", 
-        hostp->h_name, hostaddrp);
-        printf("server received %d/%d bytes: %s\n", strlen(buf), n, buf);
+        if (hostaddrp == NULL) error("ERROR on inet_ntoa\n");
+        printf("server received datagram from %s (%s)\n", hostp->h_name, hostaddrp);
+        printf("server received %ld/%d bytes: %s\n", strlen(buf), n, buf);
         
         /* 
       * sendto: echo the input back to the client 

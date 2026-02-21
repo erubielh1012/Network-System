@@ -1,7 +1,7 @@
 /* 
- * udpclient.c - A simple UDP client
- * usage: udpclient <host> <port>
- */
+* udpclient.c - A simple UDP client
+* usage: udpclient <host> <port>
+*/
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,8 +14,8 @@
 #define BUFSIZE 1024
 
 /* 
- * error - wrapper for perror
- */
+* error - wrapper for perror
+*/
 void error(char *msg) {
     perror(msg);
     exit(0);
@@ -31,8 +31,8 @@ int main(int argc, char **argv) {
 
     /* check command line arguments */
     if (argc != 3) {
-       fprintf(stderr,"usage: %s <hostname> <port>\n", argv[0]);
-       exit(0);
+        fprintf(stderr,"usage: %s <hostname> <port>\n", argv[0]);
+        exit(0);
     }
     hostname = argv[1];
     portno = atoi(argv[2]);
@@ -52,8 +52,7 @@ int main(int argc, char **argv) {
     /* build the server's Internet address */
     bzero((char *) &serveraddr, sizeof(serveraddr));
     serveraddr.sin_family = AF_INET;
-    bcopy((char *)server->h_addr, 
-	  (char *)&serveraddr.sin_addr.s_addr, server->h_length);
+    bcopy((char *)server->h_addr, (char *)&serveraddr.sin_addr.s_addr, server->h_length);
     serveraddr.sin_port = htons(portno);
 
     /* get a message from the user */
@@ -63,14 +62,14 @@ int main(int argc, char **argv) {
 
     /* send the message to the server */
     serverlen = sizeof(serveraddr);
-    n = sendto(sockfd, buf, strlen(buf), 0, &serveraddr, serverlen);
-    if (n < 0) 
-      error("ERROR in sendto");
+    n = sendto(sockfd, buf, strlen(buf), 0, (struct sockaddr *)&serveraddr, (socklen_t)serverlen);
+    if (n < 0)
+        error("ERROR in sendto");
     
     /* print the server's reply */
-    n = recvfrom(sockfd, buf, strlen(buf), 0, &serveraddr, &serverlen);
+    n = recvfrom(sockfd, buf, strlen(buf), 0, (struct sockaddr *)&serveraddr, (socklen_t *)&serverlen);
     if (n < 0) 
-      error("ERROR in recvfrom");
-    printf("Echo from server: %s", buf);
+        error("ERROR in recvfrom");
+    printf("Echo from server: %s\n", buf);
     return 0;
 }

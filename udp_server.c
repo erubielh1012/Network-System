@@ -15,6 +15,7 @@
 #include <fcntl.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 
 #define BUFF_SIZE 1024+96 // 1024 bytes for the payload, 96 bytes for the header
 #define PAYLOAD_SIZE 1024
@@ -24,6 +25,7 @@
 #define TYPE_RESP 2
 #define TYPE_DATA 3
 #define TYPE_DONE 4
+#define TYPE_ACK  5
 
 int parse_packet(char *packet, int packet_bytes, int *request_id, int *type, int *transfer_id, int *length, char *payload);
 int send_text_packet(int sockfd, struct sockaddr_in serveraddr, socklen_t serverlen, int request_id, int type, int transfer_id, char *payload);
@@ -175,20 +177,48 @@ int main(int argc, char **argv) {
             snprintf(file_size_str, 10, "%zu", file_size);
 
             // send back a response with file size
-            strcpy(rsp_payload, file_size_str);            
+            strcpy(rsp_payload, file_size_str);
             send_text_packet(sockfd, clientaddr, clientlen, request_id, TYPE_RESP, -1, rsp_payload);
+
+            /* Stop-and-Wait: set timeout for ACK wait */
+            struct timeval ack_timeout;
+            ack_timeout.tv_sec = 2;
+            ack_timeout.tv_usec = 0;
+            setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &ack_timeout, sizeof(ack_timeout));
 
             size_t read_len = 0;
             size_t nread = 0;
+            int chunk_id = 0;
+            const int max_retries = 5;
             while (read_len < file_size) {
                 bzero(rsp_payload, PAYLOAD_SIZE);
 
                 if ((nread = read(fd, rsp_payload, PAYLOAD_SIZE)) > 0) {
                     read_len += nread;
-                    if (send_data_packet(sockfd, clientaddr, clientlen, request_id, transfer_id, rsp_payload, (int)nread) < 0) {
-                        printf("Error: failed to send packet\n");
-                        continue;
+                    int ack_received = 0;
+                    for (int retry = 0; retry < max_retries && !ack_received; retry++) {
+                        if (send_data_packet(sockfd, clientaddr, clientlen, request_id, chunk_id, rsp_payload, (int)nread) < 0) {
+                            printf("Error: failed to send packet\n");
+                            break;
+                        }
+                        /* Wait for ACK before sending next packet */
+                        bzero(req_packet, BUFF_SIZE);
+                        if ((received = recvfrom(sockfd, req_packet, BUFF_SIZE, 0, (struct sockaddr *)&clientaddr, (socklen_t *)&clientlen)) >= 0) {
+                            int ack_rid, ack_type, ack_tid, ack_len;
+                            if (parse_packet(req_packet, received, &ack_rid, &ack_type, &ack_tid, &ack_len, req_payload) >= 0
+                                && ack_type == TYPE_ACK && ack_rid == request_id && ack_tid == chunk_id) {
+                                ack_received = 1;
+                            }
+                        }
+                        if (!ack_received && retry < max_retries - 1) {
+                            printf("ACK timeout, retransmitting chunk %d\n", chunk_id);
+                        }
                     }
+                    if (!ack_received) {
+                        printf("Error: no ACK after %d retries\n", max_retries);
+                        break;
+                    }
+                    chunk_id++;
                 } else {
                     printf("Error: Failed to read file\n");
                 }
@@ -235,7 +265,7 @@ int main(int argc, char **argv) {
                 continue;
             }
 
-            // loop to receive the file until the file size is reached
+            /* Stop-and-Wait: receive one data packet at a time, then send ACK */
             int temp_type, temp_request_id, temp_transfer_id, temp_length, received_len = 0;
             while (received_len < file_size) {
                 printf("Waiting for data packet...\n");
@@ -249,13 +279,15 @@ int main(int argc, char **argv) {
                     continue;
                 }
 
-                // printf("Total needed: %ld, received: %d\n", file_size, received_len);
-
                 if (temp_type == TYPE_DATA && temp_request_id == request_id && temp_length > 0) {
                     received_len += temp_length;
-                    // begin writing the file 
                     printf("Writing file...\n");
                     put_file(&fd, req_payload, temp_length, rsp_payload);
+                    /* Send ACK so client sends next packet Stop-and-Wait*/
+                    if (send_text_packet(sockfd, clientaddr, clientlen, request_id, TYPE_ACK, temp_transfer_id, "ack") < 0) {
+                        printf("Error: failed to send ACK\n");
+                        continue;
+                    }
                 } else {
                     strncpy(rsp_payload, "Error: something went wrong with the file transfer\n", PAYLOAD_SIZE);
                     printf("Error: something went wrong with the file transfer\n");

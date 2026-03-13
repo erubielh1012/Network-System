@@ -21,6 +21,7 @@
 #define TYPE_RESP 2
 #define TYPE_DATA 3
 #define TYPE_DONE 4
+#define TYPE_ACK  5
 
 int parse_packet(char *packet, int packet_bytes, int *request_id, int *type, int *transfer_id, int *length, char *payload);
 int send_text_packet(int sockfd, struct sockaddr_in serveraddr, socklen_t serverlen, int request_id, int type, int transfer_id, char *payload);
@@ -156,7 +157,7 @@ int main(int argc, char **argv) {
                 int read_len = 0;
                 // loop to receive the file until the server sends a done packet
                 while (read_len < file_size) {
-                    /* receive the server's data response */
+                    /* receive the server's data response (Stop-and-Wait: one packet at a time) */
                     bzero(buf, BUFF_SIZE);
                     if ((nrecv = recvfrom(sockfd, buf, BUFF_SIZE, 0, (struct sockaddr *)&serveraddr, (socklen_t *)&serverlen)) < 0) {
                         printf("Error: failed to receive packet\n");
@@ -172,7 +173,12 @@ int main(int argc, char **argv) {
                             printf("Error: Failed to write file %s\n", file_name);
                             break;
                         }
-                    } 
+                        /* Stop-and-Wait: send ACK so server can send next packet */
+                        if (send_text_packet(sockfd, serveraddr, serverlen, request_id, TYPE_ACK, temp_transfer_id, "ack") < 0) {
+                            printf("Error: failed to send ACK\n");
+                            break;
+                        }
+                    }
                 }
             }
 
@@ -222,18 +228,33 @@ int main(int argc, char **argv) {
             }
 
             if (temp_type == TYPE_RESP && temp_request_id == request_id) {
-                // printf("Server is ready to receive the file\n");
-                // read as much of the file as fits into payload
-                size_t read_len = 0;
+                /* Stop-and-Wait: send one packet, wait for ACK, then next */
                 size_t nread = 0;
-                // loop to read file until the file size is reached
+                const int max_retries = 5;
                 while ((nread = read(fd, payload, PAYLOAD_SIZE)) > 0) {
-                    read_len += nread;
-                    if (send_data_packet(sockfd, serveraddr, serverlen, request_id, transfer_id, payload, (int)nread) < 0) {
-                        printf("Error: failed to send packet\n");
-                        close(fd);
-                        continue;
+                    int ack_received = 0;
+                    for (int retry = 0; retry < max_retries && !ack_received; retry++) {
+                        if (send_data_packet(sockfd, serveraddr, serverlen, request_id, transfer_id, payload, (int)nread) < 0) {
+                            printf("Error: failed to send packet\n");
+                            break;
+                        }
+                        /* Wait for ACK before sending next packet */
+                        bzero(buf, BUFF_SIZE);
+                        if ((nrecv = recvfrom(sockfd, buf, BUFF_SIZE, 0, (struct sockaddr *)&serveraddr, (socklen_t *)&serverlen)) >= 0) {
+                            if (parse_packet(buf, nrecv, &temp_request_id, &temp_type, &temp_transfer_id, &temp_length, req_payload) >= 0
+                                && temp_type == TYPE_ACK && temp_request_id == request_id && temp_transfer_id == transfer_id) {
+                                ack_received = 1;
+                            }
+                        }
+                        if (!ack_received && retry < max_retries - 1) {
+                            printf("ACK timeout, retransmitting packet (transfer_id=%d)\n", transfer_id);
+                        }
                     }
+                    if (!ack_received) {
+                        printf("Error: no ACK after %d retries\n", max_retries);
+                        break;
+                    }
+                    transfer_id++;
                 }
             }
             close(fd);

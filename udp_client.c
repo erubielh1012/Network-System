@@ -129,6 +129,7 @@ int main(int argc, char **argv) {
             }
 
             // get the file size from the server (discard stale packets from previous requests)
+            // infinite loop to keep receiving packets until the server sends a response to request_id
             for (;;) {
                 bzero(buf, BUFF_SIZE);
                 if ((nrecv = recvfrom(sockfd, buf, BUFF_SIZE, 0, (struct sockaddr *)&serveraddr, (socklen_t *)&serverlen)) < 0) {
@@ -144,6 +145,7 @@ int main(int argc, char **argv) {
             }
 
             if (temp_type == TYPE_RESP && temp_request_id == request_id) {
+                // parse the file size from the response
                 char file_size_str[10];
                 strncpy(file_size_str, strtok(payload, delimiter), 10);
                 if (strlen(file_size_str) == 0) {
@@ -155,7 +157,7 @@ int main(int argc, char **argv) {
                 temp_type = 0;
                 temp_request_id = 0;
                 int read_len = 0;
-                // loop to receive the file until the server sends a done packet
+                // loop to receive the file until the file size is reached
                 while (read_len < file_size) {
                     /* receive the server's data response (Stop-and-Wait: one packet at a time) */
                     bzero(buf, BUFF_SIZE);
@@ -171,7 +173,7 @@ int main(int argc, char **argv) {
                         read_len += temp_length;
                         if (write(fd, payload, temp_length) < 0) {
                             printf("Error: Failed to write file %s\n", file_name);
-                            break;
+                            break; // ideally you should try to request the same packet from server again
                         }
                         /* Stop-and-Wait: send ACK so server can send next packet */
                         if (send_text_packet(sockfd, serveraddr, serverlen, request_id, TYPE_ACK, temp_transfer_id, "ack") < 0) {
@@ -234,6 +236,7 @@ int main(int argc, char **argv) {
                 while ((nread = read(fd, payload, PAYLOAD_SIZE)) > 0) {
                     int ack_received = 0;
                     for (int retry = 0; retry < max_retries && !ack_received; retry++) {
+                        // send the data packet to the server
                         if (send_data_packet(sockfd, serveraddr, serverlen, request_id, transfer_id, payload, (int)nread) < 0) {
                             printf("Error: failed to send packet\n");
                             break;

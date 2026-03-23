@@ -197,6 +197,7 @@ int main(int argc, char **argv) {
                     read_len += nread;
                     int ack_received = 0;
                     for (int retry = 0; retry < max_retries && !ack_received; retry++) {
+                        // send the data packet to the client
                         if (send_data_packet(sockfd, clientaddr, clientlen, request_id, chunk_id, rsp_payload, (int)nread) < 0) {
                             printf("Error: failed to send packet\n");
                             break;
